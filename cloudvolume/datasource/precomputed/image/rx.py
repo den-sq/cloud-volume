@@ -43,7 +43,7 @@ def download_sharded(
   compress, progress,
   fill_missing, 
   order, background_color,
-  label
+  label, renumber,
 ):
   full_bbox = requested_bbox.expand_to_chunk_size(
     meta.chunk_size(mip), offset=meta.voxel_offset(mip)
@@ -53,9 +53,10 @@ def download_sharded(
   compress_cache = should_compress(meta.encoding(mip), compress, cache, iscache=True)
 
   if label is None:
+    dtype = np.uint16 if renumber else meta.dtype
     renderbuffer = np.full(
       shape=shape, fill_value=background_color,
-      dtype=meta.dtype, order=order
+      dtype=dtype, order=order
     )
   else:
     renderbuffer = np.zeros(shape, dtype=bool, order="F")
@@ -100,6 +101,9 @@ def download_sharded(
   for zcode, (data_encoding, chunkdata) in io_chunkdata.items():
     lru[zcode] = (data_encoding, chunkdata)
 
+  remap = { background_color: background_color }
+  N = 1
+
   for zcode, (data_encoding, chunkdata) in itertools.chain(io_chunkdata.items(), lru_chunkdata):
     cutout_bbox = code_map[zcode]
     img3d = decode_fn(
@@ -109,17 +113,44 @@ def download_sharded(
       encoding=data_encoding,
     )
     
-    if single_voxel:
-      renderbuffer[:] = img3d
-    elif single_voxel and label is not None:
-      renderbuffer[:] = img3d == label
+    # For the first option, decode_binary_image already
+    # performs the comparison, it also extracts the single voxel
+    if single_voxel and label is not None:
+      if np.any(img3d):
+        remap[1] = 1
+      shade(renderbuffer, requested_bbox, img3d, cutout_bbox)
+    elif single_voxel:
+      if renumber:
+        remap[int(img3d[0,0,0,0])] = 1
+        renderbuffer[:] = int(img3d[0,0,0,0]) != background_color
+      else:
+        renderbuffer[:] = img3d
+    elif renumber:
+      if img3d is None:
+        img_labels = [ background_color ]
+      else:
+        img_labels = fastremap.unique(img3d)
+      for lbl in img_labels:
+        if lbl not in remap:
+          remap[int(lbl)] = N
+          N += 1
+      if N > np.iinfo(renderbuffer.dtype).max:
+        renderbuffer = fastremap.refit(renderbuffer, value=N, increase_only=True)
+
+      img3d = fastremap.remap(img3d, remap, in_place=True)
+      shade(renderbuffer, requested_bbox, img3d, cutout_bbox)
     else:
       shade(renderbuffer, requested_bbox, img3d, cutout_bbox)
 
-  return VolumeCutout.from_volume(
+  result_image = VolumeCutout.from_volume(
     meta, mip, renderbuffer, 
     requested_bbox
   )
+
+  if renumber:
+    return (result_image, remap)
+  else:
+    return result_image
 
 def download_raw_sharded(
   requested_bbox, mip, 
@@ -299,12 +330,12 @@ def download(
       with lock:
         for lbl in img_labels:
           if lbl not in remap:
-            remap[lbl] = N
+            remap[int(lbl)] = N
             N += 1
         if N > np.iinfo(renderbuffer.dtype).max:
           renderbuffer = fastremap.refit(renderbuffer, value=N, increase_only=True)
 
-        fastremap.remap(img3d, remap, in_place=True)
+        img3d = fastremap.remap(img3d, remap, in_place=True)
         shade(renderbuffer, requested_bbox, img3d, bbox)
 
     fn = process
@@ -484,6 +515,7 @@ def repopulate_lru_from_shm(
       img3d, encoding,
       meta.compressed_segmentation_block_size(mip),
       compression_params=meta.compression_params(mip),
+      num_threads=meta.config.codec_threads,
     )
     lru[chunkname] = (encoding, binary)
 
@@ -599,6 +631,7 @@ def download_chunk(
           img3d, lru_encoding, 
           block_size,
           compression_params=meta.compression_params(mip),
+          num_threads=meta.config.codec_threads,
         )
         
       lru[filename] = (lru_encoding, content)
@@ -690,7 +723,7 @@ def decode(
   Returns: ndarray
   """
   return _decode_helper(  
-    chunks.decode, 
+    partial(chunks.decode, num_threads=meta.config.codec_threads),
     meta, input_bbox, 
     content, fill_missing, 
     mip, background_color,
@@ -740,7 +773,7 @@ def decode_binary_image(
       return np.zeros(shape, dtype=bool, order="F")
 
   return _decode_helper(
-    partial(chunks.decode_binary_image, label), 
+    partial(chunks.decode_binary_image, label, num_threads=meta.config.codec_threads),
     meta, input_bbox, 
     content, fill_missing, 
     mip, 

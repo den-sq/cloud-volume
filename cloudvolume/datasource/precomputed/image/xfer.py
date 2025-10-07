@@ -52,6 +52,7 @@ def transfer_by_rerendering(
   compress:CompressType = None,
   compress_level:Optional[int] = None,
   encoding:Optional[str] = None,
+  codec_threads:int = 1,
 ):
   from cloudvolume import CloudVolume
 
@@ -59,6 +60,7 @@ def transfer_by_rerendering(
   dest_cv.commit_info()
   dest_cv.progress = False
   dest_cv.compress = compress
+  dest_cv.config.codec_threads = codec_threads
   mip = dest_cv.mip
 
   progress = source.config.progress
@@ -68,6 +70,7 @@ def transfer_by_rerendering(
   shape = np.array(dest_cv.chunk_size * 4)
 
   bbox = bbox.expand_to_chunk_size(dest_cv.chunk_size, offset=dest_cv.voxel_offset)
+  bbox = Bbox.clamp(bbox, dest_cv.bounds)
 
   grid_box = bbox / shape
   grid_size = grid_box.size()
@@ -94,6 +97,7 @@ def transfer_unsharded_to_sharded(
   compress:CompressType = None, 
   compress_level:Optional[int] = None,
   encoding:Optional[str] = None,
+  codec_threads:int = 1,
 ):
   from cloudvolume import CloudVolume
 
@@ -135,6 +139,7 @@ def transfer_unsharded_to_sharded(
     src_block_size=source.meta.compressed_segmentation_block_size(mip),
     dest_block_size=cv.meta.compressed_segmentation_block_size(mip),
     background_color=source.background_color,
+    num_threads=codec_threads,
   )
   for code, binary in itr:
     files[code] = binary
@@ -159,6 +164,7 @@ def transfer_any_to_unsharded(
   compress:CompressType = None, 
   compress_level:Optional[int] = None,
   encoding:Optional[str] = None,
+  codec_threads:int = 1,
 ):
   """
   You can specify an alternative encoding and compression 
@@ -202,6 +208,7 @@ def transfer_any_to_unsharded(
     src_block_size=source.meta.compressed_segmentation_block_size(mip),
     dest_block_size=cv.meta.compressed_segmentation_block_size(mip),
     background_color=source.background_color,
+    num_threads=codec_threads,
   )
   # tricky loops done to perform in-place
   # re-encoding without changing the dict
@@ -231,6 +238,7 @@ def transfer_sharded_to_sharded(
   compress:CompressType = True, 
   compress_level:Optional[int] = None, 
   encoding:Optional[str] = None,
+  codec_threads:int = 1,
 ):
   from cloudvolume import CloudVolume
   if mip is None:
@@ -297,6 +305,7 @@ def transfer_sharded_to_sharded(
         src_block_size=source.meta.compressed_segmentation_block_size(mip),
         dest_block_size=destvol.meta.compressed_segmentation_block_size(mip),
         background_color=source.background_color,
+        num_threads=codec_threads,
       )
       for label, binary in itr:
         img_chunks[label] = binary
@@ -316,6 +325,7 @@ def transfer_unsharded_to_unsharded(
   compress:CompressType = True, 
   compress_level:Optional[int] = None, 
   encoding:Optional[str] = None,
+  codec_threads:int = 1,
 ):
   """
   Transfer files from one storage location to another, bypassing
@@ -433,6 +443,7 @@ def transfer_unsharded_to_unsharded(
           src_block_size=source.meta.compressed_segmentation_block_size(mip),
           dest_block_size=destvol.meta.compressed_segmentation_block_size(mip),
           background_color=source.background_color,
+          num_threads=codec_threads,
         )
         cfdest.puts(
           itr, 

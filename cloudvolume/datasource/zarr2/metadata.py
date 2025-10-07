@@ -6,7 +6,7 @@ import numpy as np
 from cloudfiles import CloudFiles
 
 from cloudvolume.datasource.precomputed.metadata import PrecomputedMetadata
-from cloudvolume.lib import jsonify, Vec, Bbox
+from cloudvolume.lib import jsonify, Vec, Bbox, spatial_unit_in_meters, time_unit_in_seconds
 
 from ... import exceptions
 from ...provenance import DataLayerProvenance
@@ -26,7 +26,7 @@ CV_TO_ZARR_DTYPE = {
   "float64": "<f8",
 }
 
-class ZarrMetadata(PrecomputedMetadata):
+class Zarr2Metadata(PrecomputedMetadata):
   def __init__(self, cloudpath, config, cache,  info=None):
     
     orig_info = info
@@ -45,6 +45,7 @@ class ZarrMetadata(PrecomputedMetadata):
 
     self.zarrays = []
     self.zattrs = self.default_zattrs()
+    self._is_group = False
 
     if orig_info is None:
       self.info = self.fetch_info()
@@ -53,8 +54,15 @@ class ZarrMetadata(PrecomputedMetadata):
 
     self.provenance = DataLayerProvenance()
 
-  def default_zattrs(self):
-    return {
+  @property
+  def zarr_format(self):
+    return self.zinfo["zarr_format"]
+
+  def is_group(self):
+    return self._is_group
+
+  def default_zattrs(self, num_dims = 5):
+    attrs = {
       "multiscales": [
         {
           "axes": [
@@ -83,9 +91,7 @@ class ZarrMetadata(PrecomputedMetadata):
               "unit": "micrometer"
             }
           ],
-          "datasets": [
-            
-          ],
+          "datasets": [],
           "name": "/",
           "version": "0.4"
         }
@@ -95,45 +101,53 @@ class ZarrMetadata(PrecomputedMetadata):
       }
     }
 
+    attrs["multiscales"][0]["axes"] = attrs["multiscales"][0]["axes"][5-num_dims:]
+
+    return attrs
+
+  def default_datasets(self, num_datasets):
+    ds = []
+    for i in range(num_datasets):
+      path = ""
+      if self.is_group():
+        path = f"{i}"
+
+      ds.append(
+        {
+          "coordinateTransformations": [
+            {
+              "scale": [ 1 ] * len(self.zarr_chunk_size(0)),
+              "type": "scale"
+            }
+          ],
+          "path": path
+        }
+      )
+    return ds
+
   def spatial_resolution_in_nm(self, mip, zattrs = None, zarrays = None):
     if zarrays is None:
       zarrays = self.zarrays
     if zattrs is None:
       zattrs = self.zattrs
 
-    def unit2factor(unit):
-      if unit == "meter":
-        return 1
-      elif unit == "centimeter":
-        return 1e-2
-      elif unit == "millimeter":
-        return 1e-3
-      elif unit == "micrometer":
-        return 1e-6
-      elif unit == "nanometer":
-        return 1e-9
-      elif unit == "picometer":
-        return 1e-12
-      else:
-        raise ValueError(f"unit not supported: {unit}")
-
     scale_factors = np.ones([3], dtype=np.float32)
     positions = [0,0,0]
-    for i, axis in enumerate(self.zattrs["multiscales"][0]["axes"]):
+    for i, axis in enumerate(self.axes()):
       if axis["type"] != "space":
         continue
       
       if axis["name"] == "x":
-        scale_factors[0] = unit2factor(axis["unit"])
+        scale_factors[0] = spatial_unit_in_meters(axis.get("unit", "nanometer"))
         positions[0] = i
       elif axis["name"] == "y":
-        scale_factors[1] = unit2factor(axis["unit"])
+        scale_factors[1] = spatial_unit_in_meters(axis.get("unit", "nanometer"))
         positions[1] = i
       elif axis["name"] == "z":
-        scale_factors[2] = unit2factor(axis["unit"])
+        scale_factors[2] = spatial_unit_in_meters(axis.get("unit", "nanometer"))
         positions[2] = i
 
-    resolution = self.zattrs["multiscales"][0]["datasets"][mip]["coordinateTransformations"][0]["scale"]
+    resolution = self.datasets()[mip]["coordinateTransformations"][0]["scale"]
     resolution = np.array([
       resolution[positions[0]],
       resolution[positions[1]],
@@ -142,28 +156,20 @@ class ZarrMetadata(PrecomputedMetadata):
 
     return resolution * (scale_factors / 1e-9)
 
-  def time_resolution_in_seconds(self, mip):
+  def time_resolution_in_seconds(self, mip:int) -> float:
     i = 0
     unit = None
-    for axis in self.zattrs["multiscales"][0]["axes"]:
+    for axis in self.axes():
       if axis["type"] == "time":
         unit = axis["unit"]
         break
       i += 1
 
-    scale_factor = 1
-    if unit == "kilosecond":
-      scale_factor = 1e3
-    elif unit == "centisecond":
-      scale_factor = 1e-2
-    elif unit == "millisecond":
-      scale_factor = 1e-3
-    elif unit == "microsecond":
-      scale_factor = 1e-6
-    elif unit == "nanosecond":
-      scale_factor = 1e-9
+    if unit is None:
+      return 1.0
 
-    resolution = self.zattrs["multiscales"][0]["datasets"][mip]["coordinateTransformations"][0]["scale"]
+    scale_factor = time_unit_in_seconds(unit)
+    resolution = self.datasets()[mip]["coordinateTransformations"][0]["scale"]
     return resolution[i] * scale_factor
 
   def has_time_axis(self):
@@ -171,6 +177,9 @@ class ZarrMetadata(PrecomputedMetadata):
       return self.time_index() is not None
     except ValueError:
       return False
+
+  def datasets(self):
+    return self.zattrs["multiscales"][0]["datasets"]
 
   def axes(self):
     return self.zattrs["multiscales"][0]["axes"]
@@ -187,7 +196,10 @@ class ZarrMetadata(PrecomputedMetadata):
 
   def num_time_chunks(self, mip):
     nframes = self.num_frames(mip)
-    t_chunk_size = self.time_chunk_size(mip)
+    try:
+      t_chunk_size = self.time_chunk_size(mip)
+    except ValueError:
+      return 1
     return int(np.ceil(nframes / t_chunk_size))
 
   def num_frames(self, mip):
@@ -206,7 +218,10 @@ class ZarrMetadata(PrecomputedMetadata):
     if self.order(mip) == "F":
       values.reverse()
 
-    return sep.join([ self.key(mip), *values ])
+    if self.is_group():
+      return sep.join([ self.key(mip), *values ])
+    else:
+      return sep.join([ *values ])
 
   def duration_in_seconds(self):
     return self.time_resolution_in_seconds(0) * self.num_frames(0)
@@ -234,7 +249,9 @@ class ZarrMetadata(PrecomputedMetadata):
       if dsep == '\\':
         dsep = '\\\\' # compensate for regexp escaping
 
-      regexp = rf"(?P<mip>\d+){dsep}"
+      regexp = rf""
+      if self.is_group():
+        regexp = rf"(?P<mip>\d+){dsep}"
 
       groups = []
       for axis in axes:
@@ -450,22 +467,37 @@ class ZarrMetadata(PrecomputedMetadata):
 
     if metadata[0] is not None:
       self.zarrays.append(metadata[0])
+      self._is_group = True
     else:
-      self.zarrays = []
+      self.zarrays = [ cf.get_json(".zarray") ]
+      self._is_group = False
+      if self.zarrays[0] is None:
+        self.zarrays = []
     
     if metadata[1] is not None:
       self.zattrs = metadata[1]
     else:
-      self.zattrs = self.default_zattrs()
+      self.zattrs = {}
 
-    datasets = self.zattrs["multiscales"][0]["datasets"]
+    num_dims = 5
+    if len(self.zarrays):
+      num_dims = len(self.zarrays[0]["chunks"])
+
+    if self.zattrs is None or "multiscales" not in self.zattrs:
+      self.zattrs.update(self.default_zattrs(num_dims))
+
+    datasets = self.datasets()
+    
+    if datasets == []:
+      self.zattrs["multiscales"][0]["datasets"] = self.default_datasets(len(self.zarrays))
+      datasets = self.datasets()
 
     zarray_paths = [
       f"{ds.get('path', i+1)}/.zarray" for i, ds in enumerate(datasets)
     ]
     res = cf.get_json(zarray_paths)
-
-    if res is not None:
+    
+    if any([ x is not None for x in res ]):
       self.zarrays.extend(res)
 
     return self.zarr_to_info(self.zarrays, self.zattrs)

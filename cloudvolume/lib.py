@@ -650,6 +650,15 @@ class Bbox(object):
     while len(slices) < self.ndim:
       slices.append( slice(None, None, None) )
 
+    while len(slices) > self.ndim:
+      slc = slices[-1]
+      if slc.start is None and slc.stop is None:
+        slices.pop()
+      elif abs(slc.stop - slc.start) == 1:
+        slices.pop()
+      else:
+        raise ValueError(f"Too many slices {slices} for this context {self}")
+
     # First three slices are x,y,z, last is channel. 
     # Handle only x,y,z here, channel seperately
     for index, slc in enumerate(slices):
@@ -737,7 +746,7 @@ class Bbox(object):
 
   def volume(self):
     if np.issubdtype(self.dtype, np.integer):
-      return self.size3().astype(np.int64).rectVolume()
+      return reduce(operator.mul, (int(x) for x in self.size3()))
     else:
       return self.size3().astype(np.float64).rectVolume()
 
@@ -1072,6 +1081,11 @@ def save_images(
 
       if img2d.dtype == np.uint8:
         img2d = Image.fromarray(img2d, 'L')
+      elif img2d.dtype == np.uint16:
+        if image_format == "TIFF":
+          img2d = Image.fromarray(img2d, 'I;16') # see https://github.com/python-pillow/Pillow/blob/8ccdc399df1254c89bdb4e8fda6d6daf98943ab6/src/PIL/TiffImagePlugin.py#L1670-L1671
+        else:
+          img2d = Image.fromarray(img2d, 'I;16L')
       elif img2d.dtype == bool:
         img2d = img2d.astype(np.uint8) * 255
         img2d = Image.fromarray(img2d, 'L')
@@ -1080,7 +1094,7 @@ def save_images(
         img2d[:,:] |= 0xff000000 # for little endian abgr
         img2d = Image.fromarray(img2d, 'RGBA')
 
-      file_index = str(level).zfill(3)
+      file_index = str(level).zfill(5)
       filename = '{}.{}'.format(file_index, image_format.lower())
       if num_channels > 1:
         filename = '{}-{}'.format(channel_index, filename)
@@ -1109,3 +1123,77 @@ def moving_average(a:np.ndarray, n:int, mode:str = "symmetric") -> np.ndarray:
   ret = (ret[n:] - ret[:-n])[:-n]
   ret /= float(n)
   return ret
+
+def spatial_unit_in_meters(unit:str) -> float:
+  if unit == "meter":
+    return 1.0
+  elif unit == "centimeter":
+    return 1e-2
+  elif unit == "millimeter":
+    return 1e-3
+  elif unit == "micrometer":
+    return 1e-6
+  elif unit == "nanometer":
+    return 1e-9
+  elif unit == "picometer":
+    return 1e-12
+  elif unit == "femtometer":
+    return 1e-15
+  elif unit == "angstrom":
+    return 1e-10
+  elif unit == "foot":
+    return 0.3048
+  elif unit == "yard":
+    return 3 * 0.3048
+  elif unit == "inch":
+    return 0.0254
+  else:
+    raise ValueError(f"unit not supported: {unit}")
+
+def time_unit_in_seconds(unit:str) -> float:
+  if unit == "yottasecond":
+    return 1e24
+  elif unit == "zettasecond":
+    return 1e21
+  elif unit == "exasecond":
+    return 1e18
+  elif unit == "petasecond":
+    return 1e15
+  elif unit == "terasecond":
+    return 1e12
+  elif unit == "gigasecond":
+    return 1e9
+  elif unit == "megasecond":
+    return 1e6
+  elif unit == "kilosecond":
+    return 1e3
+  elif unit == "hectosecond":
+    return 1e2
+  elif unit == "second":
+    return 1.0
+  elif unit == "decisecond":
+    return 0.1
+  elif unit == "centisecond":
+    return 1e-2
+  elif unit == "millisecond":
+    return 1e-3
+  elif unit == "microsecond":
+    return 1e-6
+  elif unit == "nanosecond":
+    return 1e-9
+  elif unit == "picosecond":
+    return 1e-12
+  elif unit == "femtosecond":
+    return 1e-15
+  elif unit == "attosecond":
+    return 1e-18
+  elif unit == "zeptosecond":
+    return 1e-21
+  elif unit == "minute":
+    return 60.0
+  elif unit == "hour":
+    return 3600.0
+  elif unit == "day":
+    return 24.0 * 3600.0
+  else:
+    raise ValueError(f"{unit} is not supported.")

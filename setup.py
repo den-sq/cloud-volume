@@ -33,9 +33,15 @@ OTHER_FORMATS = [
   "zstandard",
 ]
 
+ZARR_CODECS = [
+  "blosc",
+  "zstandard",
+]
+
+
 setuptools.setup(
   name="cloud_volume",
-  version="12.2.0",
+  version="12.7.0",
   setup_requires=[
     'numpy<1.17; python_version<"3.5"',
     'numpy; python_version>="3.5"',
@@ -57,9 +63,14 @@ setuptools.setup(
     "skeleton_viewer": [ 'matplotlib>=3.6' ],
     "all_viewers": [ 'vtk', 'matplotlib>=3.6' ],
     "dask": [ 'dask[array]' ],
-    "zarr": [ 'blosc', 'zstandard' ],
-    "test": [ "pytest", "pytest-cov", "codecov", "requests_mock", "scipy"],
-
+    "zarr": ZARR_CODECS,
+    "test": [ 
+      "pytest", "pytest-cov", "codecov", 
+      "requests_mock", "scipy", "zarr" 
+    ] + ZARR_CODECS,
+    "psql": [ "psycopg2" ],
+    "mysql": [ "mysql-connector-python" ],
+    "all_sql": [ "psycopg2", "mysql-connector-python" ],
     # image compression codecs
     "blosc": [ "blosc" ],
     "jxl": [ "imagecodecs" ],
@@ -86,6 +97,8 @@ setuptools.setup(
       "requests_mock",
       "scipy",
       "pillow",
+      "psycopg2",
+      "mysql-connector-python",
     ],
   },
   author="William Silversmith, Nico Kemnitz, Ignacio Tartavull, and others",
@@ -100,13 +113,12 @@ setuptools.setup(
   description="A serverless client for reading and writing Neuroglancer Precomputed volumes both locally and on cloud services.",
   long_description=read('README.md'),
   long_description_content_type="text/markdown",
-  license = "License :: OSI Approved :: BSD License",
+  license = "BSD-3-Clause",
   keywords = "neuroglancer volumetric-data numpy connectomics microscopy image-processing biomedical-image-processing s3 gcs mesh meshes skeleton skeletons",
   url = "https://github.com/seung-lab/cloud-volume/",
   classifiers=[
     "Intended Audience :: Developers",
     "Development Status :: 5 - Production/Stable",
-    "License :: OSI Approved :: BSD License",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -114,6 +126,8 @@ setuptools.setup(
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
     "Intended Audience :: Science/Research",
     "Operating System :: POSIX",
