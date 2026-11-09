@@ -613,7 +613,7 @@ class CacheService(object):
     to_download = requested.difference(already_have)
 
     download_paths = [ pathmodule.join(basepathmap[fname], fname) for fname in to_download ]    
-    already_have = [ os.path.join(basepathmap[fname], fname) for fname in already_have ]
+    already_have = [ pathmodule.join(basepathmap[fname], fname) for fname in already_have ]
 
     return { 'local': already_have, 'remote': download_paths }
 

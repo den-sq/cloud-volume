@@ -551,3 +551,30 @@ def test_shard_bits_calculation_for_hashed():
   assert msb == 9
   assert sb == 13
 
+
+def test_sharded_image_disk_cache_hit_remote_protocol(tmp_path):
+  # A fresh CloudVolume reads a new chunk from a shard whose index and
+  # minishard index are already in the disk cache (but not the LRU).
+  # On Windows, cache hits for non-file:// protocols were reported with
+  # backslashes, so CacheService.download_as raised KeyError.
+  # mem:// stands in for gs://, s3://, https://, etc.
+  url = "mem://cloudvolume/test_sharded_image_disk_cache_hit"
+  info = CloudVolume.create_new_info(
+    num_channels=1, layer_type="image", data_type="uint8", encoding="raw",
+    resolution=[1,1,1], voxel_offset=[0,0,0],
+    chunk_size=[64,64,64], volume_size=[128,128,128],
+  )
+  cv = CloudVolume(url, info=info)
+  cv.image.to_sharded()
+  cv.commit_info()
+
+  img = np.random.randint(0, 255, size=(128,128,128,1), dtype=np.uint8)
+  filename, shard = cv.image.make_shard(img, cv.bounds, mip=0)
+  CloudFile(cv.meta.join(cv.cloudpath, cv.key, filename)).put(shard)
+
+  cache = str(tmp_path)
+  cv = CloudVolume(url, cache=cache)
+  assert np.all(cv[:64,:64,:64] == img[:64,:64,:64])
+
+  cv = CloudVolume(url, cache=cache)
+  assert np.all(cv[64:,64:,64:] == img[64:,64:,64:])
