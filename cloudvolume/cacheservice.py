@@ -413,7 +413,6 @@ class CacheService(object):
 
     progress = progress if progress is not None else self.config.progress
 
-    remote_aliases = { req['remote_alias'] for req in requests }
     aliases = [ req['local_alias'] for req in requests ]
     alias_tuples = { req['local_alias']: (req['path'], req['start'], req['end']) for req in requests }
     alias_to_path = { req['local_alias']: req['path'] for req in requests }
@@ -423,7 +422,7 @@ class CacheService(object):
       del alias_to_path[None]
       del alias_tuples[None]
 
-    locs = self.compute_data_locations(remote_aliases)
+    locs = self.compute_data_locations(aliases)
 
     fragments = {}
     if self.enabled:

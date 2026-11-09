@@ -8,7 +8,6 @@ import math
 import operator
 from operator import itemgetter
 from os.path import basename
-import os
 import struct
 
 import numpy as np
@@ -335,24 +334,20 @@ class ShardReader(object):
     } 
     """
     filenames = toiter(filenames)
-
-    remote_filenames = [ self.meta.join(path, fname) for fname in filenames ]
-    local_filenames = [ os.path.join(path, fname) for fname in filenames ]
-
+    filenames = [ self.meta.join(path, fname) for fname in filenames ]
     fufilled = { 
       fname: self.shard_index_cache[fname] \
-      for fname in remote_filenames \
+      for fname in filenames \
       if fname in self.shard_index_cache  
     }
 
     requests = []
-    for fname, local_fname in zip(remote_filenames, local_filenames):
+    for fname in filenames:
       if fname in fufilled:
         continue
       requests.append({
         'path': fname, 
-        'remote_alias': fname + '.index',
-        'local_alias': local_fname + '.index', 
+        'local_alias': fname + '.index', 
         'start': 0, 
         'end': self.spec.index_length(),
       })
@@ -452,12 +447,10 @@ class ShardReader(object):
         msn_map[(basename(filename), start, end)] = msn
 
         filepath = self.meta.join(path, filename)
-        localpath = os.path.join(path, filename)
 
         download_requests.append({
           'path': filepath,
-          'remote_alias': '{}-{}.msi'.format(filepath, msn),
-          'local_alias': '{}-{}.msi'.format(localpath, msn),
+          'local_alias': '{}-{}.msi'.format(filepath, msn),
           'start': start,
           'end': end,
         })
